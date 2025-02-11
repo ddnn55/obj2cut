@@ -7,6 +7,12 @@
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
+#include <unordered_map> // added for edge label mapping
+
+/**************
+ * command line tool to convert an OBJ file to an SVG file with
+ * the OBJ's triangles packed into a 2D space.
+ */
 
 struct Vec3 {
     double x, y, z;
@@ -56,9 +62,16 @@ struct Face {
     int v[3]; // indices to vertices (0-indexed)
 };
 
+// Add a custom hash for std::pair<int,int>
+struct PairHash {
+    std::size_t operator()(const std::pair<int,int>& p) const {
+        return std::hash<int>()(p.first) ^ (std::hash<int>()(p.second) << 1);
+    }
+};
+
 int main(int argc, char* argv[]){
     if(argc < 2){
-        std::cerr << "Usage: " << argv[0] << " path/to/file.obj\n";
+        std::cerr << "Usage: " << argv[0] << " path/to/file.obj [scale]\n";
         return 1;
     }
     
@@ -96,6 +109,21 @@ int main(int argc, char* argv[]){
             face.v[1] = idx[1] - 1;
             face.v[2] = idx[2] - 1;
             faces.push_back(face);
+        }
+    }
+    
+    // Build edge-to-label mapping
+    std::unordered_map<std::pair<int,int>, int, PairHash> edgeLabels;
+    int labelCounter = 0;
+    for(const Face &face : faces){
+        for (int i = 0; i < 3; i++) {
+            int j = (i+1)%3;
+            int a = face.v[i], b = face.v[j];
+            if(a > b) std::swap(a, b);
+            std::pair<int,int> key = {a, b};
+            if(edgeLabels.find(key) == edgeLabels.end()){
+                edgeLabels[key] = labelCounter++;
+            }
         }
     }
     
@@ -171,7 +199,20 @@ int main(int argc, char* argv[]){
     }
     double svgWidth = maxRowWidth;
     double svgHeight = currentY + rowHeight + margin;
-    
+
+// Apply scaling factor if provided as second command-line argument.
+    double scale = 10.0;
+    if(argc >= 3) {
+        scale = std::atof(argv[2]);
+    }
+    for (auto& tri : triangles2D) {
+        tri.p0.x *= scale; tri.p0.y *= scale;
+        tri.p1.x *= scale; tri.p1.y *= scale;
+        tri.p2.x *= scale; tri.p2.y *= scale;
+    }
+    svgWidth *= scale;
+    svgHeight *= scale;
+
     // Start SVG output
     std::cout << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" << "\n";
     std::cout << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" 
@@ -186,6 +227,34 @@ int main(int argc, char* argv[]){
         };
         std::string points = ptToStr(tri.p0) + " " + ptToStr(tri.p1) + " " + ptToStr(tri.p2);
         std::cout << "  <polygon points=\"" << points << "\" stroke=\"black\" fill=\"none\" />\n";
+    }
+    
+    // For each triangle, add text labels for each edge.
+    for (size_t i = 0; i < triangles2D.size(); i++) {
+        const Face &face = faces[i];
+        const Triangle2D &tri = triangles2D[i];
+        // Define lambda to output text element.
+        auto printLabel = [&](const Vec2 &p1, const Vec2 &p2, int edgeLabel) {
+            double midX = (p1.x + p2.x) / 2.0;
+            double midY = (p1.y + p2.y) / 2.0;
+            std::cout << "  <text x=\"" << midX << "\" y=\"" << midY
+                      << "\" font-size=\"20\" fill=\"red\" text-anchor=\"middle\" dominant-baseline=\"middle\">"
+                      << edgeLabel << "</text>\n";
+        };
+        // For each edge in the triangle.
+        for (int j = 0; j < 3; j++) {
+            int k = (j+1)%3;
+            int a = face.v[j], b = face.v[k];
+            if(a > b) std::swap(a,b);
+            std::pair<int,int> key = {a, b};
+            int edgeLabel = edgeLabels[key];
+            if(j==0)
+                printLabel(tri.p0, tri.p1, edgeLabel);
+            else if(j==1)
+                printLabel(tri.p1, tri.p2, edgeLabel);
+            else
+                printLabel(tri.p2, tri.p0, edgeLabel);
+        }
     }
     
     std::cout << "</svg>\n";

@@ -71,7 +71,8 @@ struct PairHash {
 
 int main(int argc, char* argv[]){
     if(argc < 2){
-        std::cerr << "Usage: " << argv[0] << " path/to/file.obj [scale] [innerOffset]\n";
+        std::cerr << "Usage: " << argv[0] 
+                  << " path/to/file.obj [scale (default:10.0)] [innerOffset (default:10.0)]\n";
         return 1;
     }
     

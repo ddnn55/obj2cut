@@ -71,7 +71,7 @@ struct PairHash {
 
 int main(int argc, char* argv[]){
     if(argc < 2){
-        std::cerr << "Usage: " << argv[0] << " path/to/file.obj [scale]\n";
+        std::cerr << "Usage: " << argv[0] << " path/to/file.obj [scale] [innerOffset]\n";
         return 1;
     }
     
@@ -205,6 +205,12 @@ int main(int argc, char* argv[]){
     if(argc >= 3) {
         scale = std::atof(argv[2]);
     }
+    // New: configure inner triangle offset (orthogonal distance)
+    double innerOffset = 10.0;
+    if(argc >= 4) {
+        innerOffset = std::atof(argv[3]);
+    }
+    
     for (auto& tri : triangles2D) {
         tri.p0.x *= scale; tri.p0.y *= scale;
         tri.p1.x *= scale; tri.p1.y *= scale;
@@ -218,15 +224,59 @@ int main(int argc, char* argv[]){
     std::cout << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" 
               << svgWidth << "\" height=\"" << svgHeight << "\">\n";
     
-    // Output each packed triangle.
+    // Output each packed triangle and its inner triangle.
     for (const Triangle2D &tri : triangles2D) {
         auto ptToStr = [&](const Vec2 &p) {
             std::ostringstream oss;
             oss << std::fixed << std::setprecision(2) << p.x << "," << p.y;
             return oss.str();
         };
-        std::string points = ptToStr(tri.p0) + " " + ptToStr(tri.p1) + " " + ptToStr(tri.p2);
-        std::cout << "  <polygon points=\"" << points << "\" stroke=\"black\" fill=\"none\" />\n";
+        // Outer triangle.
+        std::string outerPoints = ptToStr(tri.p0) + " " + ptToStr(tri.p1) + " " + ptToStr(tri.p2);
+        std::cout << "  <polygon points=\"" << outerPoints << "\" stroke=\"black\" fill=\"none\" />\n";
+        
+        // Compute inner triangle.
+        auto computeInnerTriangle = [&innerOffset](const Triangle2D &tri) -> Triangle2D {
+            std::array<Vec2, 3> pts = {tri.p0, tri.p1, tri.p2};
+            // Compute centroid.
+            Vec2 centroid = { (pts[0].x + pts[1].x + pts[2].x) / 3.0, (pts[0].y + pts[1].y + pts[2].y) / 3.0 };
+            // Structure for offset line.
+            struct Line { Vec2 p; Vec2 d; };
+            std::array<Line, 3> lines;
+            for (int i = 0; i < 3; i++) {
+                Vec2 a = pts[i];
+                Vec2 b = pts[(i+1)%3];
+                Vec2 u = { b.x - a.x, b.y - a.y };
+                double len = std::sqrt(u.x*u.x + u.y*u.y);
+                if(len != 0) { u.x /= len; u.y /= len; }
+                // Two candidates for perpendicular (rotate left/right).
+                Vec2 cand1 = { -u.y, u.x };
+                Vec2 cand2 = { u.y, -u.x };
+                // Choose the candidate that points towards the centroid.
+                Vec2 vec = { centroid.x - a.x, centroid.y - a.y };
+                double dot1 = vec.x*cand1.x + vec.y*cand1.y;
+                double dot2 = vec.x*cand2.x + vec.y*cand2.y;
+                Vec2 n = (dot1 > dot2) ? cand1 : cand2;
+                lines[i].p = { a.x + innerOffset * n.x, a.y + innerOffset * n.y };
+                lines[i].d = u;
+            }
+            auto intersect = [](const Line &L1, const Line &L2) -> Vec2 {
+                double denom = L1.d.x * L2.d.y - L1.d.y * L2.d.x;
+                Vec2 r = { L2.p.x - L1.p.x, L2.p.y - L1.p.y };
+                double t = (r.x * L2.d.y - r.y * L2.d.x) / denom;
+                return { L1.p.x + t * L1.d.x, L1.p.y + t * L1.d.y };
+            };
+            Triangle2D inner;
+            inner.p0 = intersect(lines[2], lines[0]);
+            inner.p1 = intersect(lines[0], lines[1]);
+            inner.p2 = intersect(lines[1], lines[2]);
+            return inner;
+        };
+        Triangle2D innerTri = computeInnerTriangle(tri);
+        std::string innerPoints = ptToStr(innerTri.p0) + " " +
+                                  ptToStr(innerTri.p1) + " " +
+                                  ptToStr(innerTri.p2);
+        std::cout << "  <polygon points=\"" << innerPoints << "\" stroke=\"blue\" fill=\"none\" />\n";
     }
     
     // For each triangle, add text labels for each edge.

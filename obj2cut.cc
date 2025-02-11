@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
+#include <limits>
 
 struct Vec3 {
     double x, y, z;
@@ -122,49 +123,67 @@ int main(int argc, char* argv[]){
         triangles2D.push_back(tri);
     }
     
-    // Determine grid dimensions
-    int count = triangles2D.size();
-    int gridCols = std::ceil(std::sqrt(count));
-    int gridRows = std::ceil((double)count / gridCols);
-    double cellWidth = 200.0;
-    double cellHeight = 200.0;
+    // Compute the global bounding box minimum.
+    double minX = std::numeric_limits<double>::max();
+    double minY = std::numeric_limits<double>::max();
+    for (const Triangle2D& tri : triangles2D) {
+        minX = std::min(minX, std::min(tri.p0.x, std::min(tri.p1.x, tri.p2.x)));
+        minY = std::min(minY, std::min(tri.p0.y, std::min(tri.p1.y, tri.p2.y)));
+    }
+
+    // Translate all triangles so that the lower-left point is at (0,0)
+    for (Triangle2D& tri : triangles2D) {
+        tri.p0.x -= minX; tri.p0.y -= minY;
+        tri.p1.x -= minX; tri.p1.y -= minY;
+        tri.p2.x -= minX; tri.p2.y -= minY;
+    }
+    
+    // Pack triangles using a greedy row packing algorithm.
+    double margin = 20.0;
+    double maxRowWidth = 1000.0;
+    double currentX = margin, currentY = margin;
+    double rowHeight = 0.0;
+    for (auto& tri : triangles2D) {
+        // Compute triangle bounding box.
+        double tMinX = std::min(tri.p0.x, std::min(tri.p1.x, tri.p2.x));
+        double tMaxX = std::max(tri.p0.x, std::max(tri.p1.x, tri.p2.x));
+        double tMinY = std::min(tri.p0.y, std::min(tri.p1.y, tri.p2.y));
+        double tMaxY = std::max(tri.p0.y, std::max(tri.p1.y, tri.p2.y));
+        double width = tMaxX - tMinX;
+        double height = tMaxY - tMinY;
+        
+        // If current row is full, move to next row.
+        if (currentX + width > maxRowWidth - margin) {
+            currentX = margin;
+            currentY += rowHeight + margin;
+            rowHeight = 0.0;
+        }
+        
+        // Compute translation for this triangle.
+        double offsetX = currentX - tMinX;
+        double offsetY = currentY - tMinY;
+        tri.p0.x += offsetX; tri.p0.y += offsetY;
+        tri.p1.x += offsetX; tri.p1.y += offsetY;
+        tri.p2.x += offsetX; tri.p2.y += offsetY;
+        
+        currentX += width + margin;
+        rowHeight = std::max(rowHeight, height);
+    }
+    double svgWidth = maxRowWidth;
+    double svgHeight = currentY + rowHeight + margin;
     
     // Start SVG output
-    double svgWidth = gridCols * cellWidth;
-    double svgHeight = gridRows * cellHeight;
-    
     std::cout << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" << "\n";
     std::cout << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" 
               << svgWidth << "\" height=\"" << svgHeight << "\">\n";
     
-    // For each triangle, center it in its cell
-    for (size_t i = 0; i < triangles2D.size(); ++i) {
-        int col = i % gridCols;
-        int row = i / gridCols;
-        double offsetX = col * cellWidth;
-        double offsetY = row * cellHeight;
-        
-        // Get triangle bounding box
-        Triangle2D tri = triangles2D[i];
-        double minX = std::min(tri.p0.x, std::min(tri.p1.x, tri.p2.x));
-        double maxX = std::max(tri.p0.x, std::max(tri.p1.x, tri.p2.x));
-        double minY = std::min(tri.p0.y, std::min(tri.p1.y, tri.p2.y));
-        double maxY = std::max(tri.p0.y, std::max(tri.p1.y, tri.p2.y));
-        double triWidth = maxX - minX;
-        double triHeight = maxY - minY;
-        
-        // Compute translation to center the triangle in the cell.
-        double translateX = offsetX + (cellWidth - triWidth)/2 - minX;
-        double translateY = offsetY + (cellHeight - triHeight)/2 - minY;
-        
-        // Define points after translation.
+    // Output each packed triangle.
+    for (const Triangle2D &tri : triangles2D) {
         auto ptToStr = [&](const Vec2 &p) {
             std::ostringstream oss;
-            oss << std::fixed << std::setprecision(2) 
-                << (p.x + translateX) << "," << (p.y + translateY);
+            oss << std::fixed << std::setprecision(2) << p.x << "," << p.y;
             return oss.str();
         };
-        
         std::string points = ptToStr(tri.p0) + " " + ptToStr(tri.p1) + " " + ptToStr(tri.p2);
         std::cout << "  <polygon points=\"" << points << "\" stroke=\"black\" fill=\"none\" />\n";
     }

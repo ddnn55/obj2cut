@@ -219,7 +219,42 @@ int main(int argc, char* argv[]){
     svgWidth *= scale;
     svgHeight *= scale;
 
-    // Start SVG output
+// Insert computeInnerTriangle lambda (moved out for reuse)
+    auto computeInnerTriangle = [&innerOffset](const Triangle2D &tri) -> Triangle2D {
+        std::array<Vec2, 3> pts = {tri.p0, tri.p1, tri.p2};
+        Vec2 centroid = { (pts[0].x + pts[1].x + pts[2].x) / 3.0, 
+                          (pts[0].y + pts[1].y + pts[2].y) / 3.0 };
+        struct Line { Vec2 p; Vec2 d; };
+        std::array<Line, 3> lines;
+        for (int i = 0; i < 3; i++) {
+            Vec2 a = pts[i];
+            Vec2 b = pts[(i+1)%3];
+            Vec2 u = { b.x - a.x, b.y - a.y };
+            double len = std::sqrt(u.x*u.x + u.y*u.y);
+            if(len != 0) { u.x /= len; u.y /= len; }
+            Vec2 cand1 = { -u.y, u.x };
+            Vec2 cand2 = { u.y, -u.x };
+            Vec2 vec = { centroid.x - a.x, centroid.y - a.y };
+            double dot1 = vec.x*cand1.x + vec.y*cand1.y;
+            double dot2 = vec.x*cand2.x + vec.y*cand2.y;
+            Vec2 n = (dot1 > dot2) ? cand1 : cand2;
+            lines[i].p = { a.x + innerOffset * n.x, a.y + innerOffset * n.y };
+            lines[i].d = u;
+        }
+        auto intersect = [](const Line &L1, const Line &L2) -> Vec2 {
+            double denom = L1.d.x * L2.d.y - L1.d.y * L2.d.x;
+            Vec2 r = { L2.p.x - L1.p.x, L2.p.y - L1.p.y };
+            double t = (r.x * L2.d.y - r.y * L2.d.x) / denom;
+            return { L1.p.x + t * L1.d.x, L1.p.y + t * L1.d.y };
+        };
+        Triangle2D inner;
+        inner.p0 = intersect(lines[2], lines[0]);
+        inner.p1 = intersect(lines[0], lines[1]);
+        inner.p2 = intersect(lines[1], lines[2]);
+        return inner;
+    };
+
+// Start SVG output
     std::cout << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" << "\n";
     std::cout << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" 
               << svgWidth << "\" height=\"" << svgHeight << "\">\n";
@@ -235,43 +270,7 @@ int main(int argc, char* argv[]){
         std::string outerPoints = ptToStr(tri.p0) + " " + ptToStr(tri.p1) + " " + ptToStr(tri.p2);
         std::cout << "  <polygon points=\"" << outerPoints << "\" stroke=\"black\" fill=\"none\" />\n";
         
-        // Compute inner triangle.
-        auto computeInnerTriangle = [&innerOffset](const Triangle2D &tri) -> Triangle2D {
-            std::array<Vec2, 3> pts = {tri.p0, tri.p1, tri.p2};
-            // Compute centroid.
-            Vec2 centroid = { (pts[0].x + pts[1].x + pts[2].x) / 3.0, (pts[0].y + pts[1].y + pts[2].y) / 3.0 };
-            // Structure for offset line.
-            struct Line { Vec2 p; Vec2 d; };
-            std::array<Line, 3> lines;
-            for (int i = 0; i < 3; i++) {
-                Vec2 a = pts[i];
-                Vec2 b = pts[(i+1)%3];
-                Vec2 u = { b.x - a.x, b.y - a.y };
-                double len = std::sqrt(u.x*u.x + u.y*u.y);
-                if(len != 0) { u.x /= len; u.y /= len; }
-                // Two candidates for perpendicular (rotate left/right).
-                Vec2 cand1 = { -u.y, u.x };
-                Vec2 cand2 = { u.y, -u.x };
-                // Choose the candidate that points towards the centroid.
-                Vec2 vec = { centroid.x - a.x, centroid.y - a.y };
-                double dot1 = vec.x*cand1.x + vec.y*cand1.y;
-                double dot2 = vec.x*cand2.x + vec.y*cand2.y;
-                Vec2 n = (dot1 > dot2) ? cand1 : cand2;
-                lines[i].p = { a.x + innerOffset * n.x, a.y + innerOffset * n.y };
-                lines[i].d = u;
-            }
-            auto intersect = [](const Line &L1, const Line &L2) -> Vec2 {
-                double denom = L1.d.x * L2.d.y - L1.d.y * L2.d.x;
-                Vec2 r = { L2.p.x - L1.p.x, L2.p.y - L1.p.y };
-                double t = (r.x * L2.d.y - r.y * L2.d.x) / denom;
-                return { L1.p.x + t * L1.d.x, L1.p.y + t * L1.d.y };
-            };
-            Triangle2D inner;
-            inner.p0 = intersect(lines[2], lines[0]);
-            inner.p1 = intersect(lines[0], lines[1]);
-            inner.p2 = intersect(lines[1], lines[2]);
-            return inner;
-        };
+        // Compute inner triangle using the shared lambda.
         Triangle2D innerTri = computeInnerTriangle(tri);
         std::string innerPoints = ptToStr(innerTri.p0) + " " +
                                   ptToStr(innerTri.p1) + " " +
@@ -279,15 +278,19 @@ int main(int argc, char* argv[]){
         std::cout << "  <polygon points=\"" << innerPoints << "\" stroke=\"blue\" fill=\"none\" />\n";
     }
     
-    // For each triangle, add text labels for each edge.
+    // For each triangle, add text labels for each edge positioned between outer and inner triangles.
     for (size_t i = 0; i < triangles2D.size(); i++) {
         const Face &face = faces[i];
         const Triangle2D &tri = triangles2D[i];
-        // Define lambda to output text element.
-        auto printLabel = [&](const Vec2 &p1, const Vec2 &p2, int edgeLabel) {
-            double midX = (p1.x + p2.x) / 2.0;
-            double midY = (p1.y + p2.y) / 2.0;
-            std::cout << "  <text x=\"" << midX << "\" y=\"" << midY
+        // Compute inner triangle for current outer triangle.
+        Triangle2D innerTri = computeInnerTriangle(tri);
+        // Define lambda to output text element using averaged midpoints.
+        auto printLabel = [&](const Vec2 &outerA, const Vec2 &outerB,
+                              const Vec2 &innerA, const Vec2 &innerB, int edgeLabel) {
+            Vec2 midOuter = { (outerA.x + outerB.x)/2.0, (outerA.y + outerB.y)/2.0 };
+            Vec2 midInner = { (innerA.x + innerB.x)/2.0, (innerA.y + innerB.y)/2.0 };
+            Vec2 labelPt = { (midOuter.x + midInner.x)/2.0, (midOuter.y + midInner.y)/2.0 };
+            std::cout << "  <text x=\"" << labelPt.x << "\" y=\"" << labelPt.y
                       << "\" font-size=\"20\" fill=\"red\" text-anchor=\"middle\" dominant-baseline=\"middle\">"
                       << edgeLabel << "</text>\n";
         };
@@ -299,11 +302,11 @@ int main(int argc, char* argv[]){
             std::pair<int,int> key = {a, b};
             int edgeLabel = edgeLabels[key];
             if(j==0)
-                printLabel(tri.p0, tri.p1, edgeLabel);
+                printLabel(tri.p0, tri.p1, innerTri.p0, innerTri.p1, edgeLabel);
             else if(j==1)
-                printLabel(tri.p1, tri.p2, edgeLabel);
+                printLabel(tri.p1, tri.p2, innerTri.p1, innerTri.p2, edgeLabel);
             else
-                printLabel(tri.p2, tri.p0, edgeLabel);
+                printLabel(tri.p2, tri.p0, innerTri.p2, innerTri.p0, edgeLabel);
         }
     }
     

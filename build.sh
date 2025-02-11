@@ -1,0 +1,1 @@
+g++ -std=c++11 -o obj2cut obj2cut.cc

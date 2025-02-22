@@ -1,4 +1,5 @@
 #include <iostream>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -169,20 +170,22 @@ int main(int argc, char* argv[]){
     
     // Pack triangles using a greedy row packing algorithm.
     double margin = 20.0;
-    double maxRowWidth = 1000.0;
+    double packWidth = (argc >= 5 ? std::atof(argv[4]) : std::numeric_limits<double>::max());
     double currentX = margin, currentY = margin;
     double rowHeight = 0.0;
+    double maxRowWidth = 0.0; // Initialize maxRowWidth
     for (auto& tri : triangles2D) {
         // Compute triangle bounding box.
-        double tMinX = std::min(tri.p0.x, std::min(tri.p1.x, tri.p2.x));
-        double tMaxX = std::max(tri.p0.x, std::max(tri.p1.x, tri.p2.x));
-        double tMinY = std::min(tri.p0.y, std::min(tri.p1.y, tri.p2.y));
-        double tMaxY = std::max(tri.p0.y, std::max(tri.p1.y, tri.p2.y));
+        double tMinX = std::min({tri.p0.x, tri.p1.x, tri.p2.x});
+        double tMaxX = std::max({tri.p0.x, tri.p1.x, tri.p2.x});
+        double tMinY = std::min({tri.p0.y, tri.p1.y, tri.p2.y});
+        double tMaxY = std::max({tri.p0.y, tri.p1.y, tri.p2.y});
         double width = tMaxX - tMinX;
         double height = tMaxY - tMinY;
         
-        // If current row is full, move to next row.
-        if (currentX + width > maxRowWidth - margin) {
+        // If adding this triangle exceeds packWidth, start a new row.
+        if (currentX + width + margin > packWidth) {
+            maxRowWidth = std::max(maxRowWidth, currentX); // Update maxRowWidth
             currentX = margin;
             currentY += rowHeight + margin;
             rowHeight = 0.0;
@@ -198,6 +201,7 @@ int main(int argc, char* argv[]){
         currentX += width + margin;
         rowHeight = std::max(rowHeight, height);
     }
+    maxRowWidth = std::max(maxRowWidth, currentX); // Final update for maxRowWidth
     double svgWidth = maxRowWidth;
     double svgHeight = currentY + rowHeight + margin;
 
@@ -219,6 +223,24 @@ int main(int argc, char* argv[]){
     }
     svgWidth *= scale;
     svgHeight *= scale;
+
+// NEW: Recompute bounding box for cropped SVG bounds.
+    double finalMinX = std::numeric_limits<double>::max();
+    double finalMinY = std::numeric_limits<double>::max();
+    double finalMaxX = std::numeric_limits<double>::lowest();
+    double finalMaxY = std::numeric_limits<double>::lowest();
+    for (const Triangle2D &tri : triangles2D) {
+        double localMinX = std::min(tri.p0.x, std::min(tri.p1.x, tri.p2.x));
+        double localMinY = std::min(tri.p0.y, std::min(tri.p1.y, tri.p2.y));
+        double localMaxX = std::max(tri.p0.x, std::max(tri.p1.x, tri.p2.x));
+        double localMaxY = std::max(tri.p0.y, std::max(tri.p1.y, tri.p2.y));
+        finalMinX = std::min(finalMinX, localMinX);
+        finalMinY = std::min(finalMinY, localMinY);
+        finalMaxX = std::max(finalMaxX, localMaxX);
+        finalMaxY = std::max(finalMaxY, localMaxY);
+    }
+    svgWidth = finalMaxX - finalMinX;
+    svgHeight = finalMaxY - finalMinY;
 
 // Insert computeInnerTriangle lambda (moved out for reuse)
     auto computeInnerTriangle = [&innerOffset](const Triangle2D &tri) -> Triangle2D {
@@ -255,10 +277,12 @@ int main(int argc, char* argv[]){
         return inner;
     };
 
-// Start SVG output
+// Start SVG output using viewBox to crop to the computed bounds.
     std::cout << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" << "\n";
     std::cout << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" 
-              << svgWidth << "\" height=\"" << svgHeight << "\">\n";
+              << svgWidth << "\" height=\"" << svgHeight 
+              << "\" viewBox=\"" << finalMinX << " " << finalMinY << " " 
+              << svgWidth << " " << svgHeight << "\">\n";
     
     // Output each packed triangle and its inner triangle.
     for (const Triangle2D &tri : triangles2D) {

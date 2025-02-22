@@ -3,7 +3,8 @@
         {
             "name": "Linux",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/libnest2d/**"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/clang",
